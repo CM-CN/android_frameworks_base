@@ -44,20 +44,12 @@
   <!-- Description of an application permission, listed so the user can choose whether they want to allow the application to do this. -->
   <string name="permdesc_setKeyguardWallpaper">Izinkan aplikasi untuk mengubah gambar latar layar kunci.</string>
   <!-- label for item that reboots the phone in phone options dialog -->
-<<<<<<< HEAD
-  <string name="global_action_reboot">But ulang</string>
-=======
   <string name="global_action_reboot">Mulai ulang</string>
->>>>>>> ac7dfbdc393ab43390655ff439d1e1542f7048d7
   <!-- label for current user in phone options dialog -->
   <string name="global_action_current_user">Saat ini</string>
   <!-- Reboot menu -->
   <!-- Button to reboot the phone, within the Reboot Options dialog -->
-<<<<<<< HEAD
-  <string name="reboot_reboot">But ulang</string>
-=======
   <string name="reboot_reboot">Mulai ulang</string>
->>>>>>> ac7dfbdc393ab43390655ff439d1e1542f7048d7
   <!-- Button to reboot the phone into recovery, within the Reboot Options dialog -->
   <string name="reboot_recovery">Pemulihan</string>
   <!-- Button to reboot the phone into bootloader, within the Reboot Options dialog -->
@@ -65,11 +57,7 @@
   <!-- Button to reboot the phone into download, within the Reboot Options dialog -->
   <string name="reboot_download">Unduh</string>
   <!-- Button to soft reboot the device, within the Reboot Options dialog -->
-<<<<<<< HEAD
-  <string name="reboot_soft">But ulang cepat</string>
-=======
   <string name="reboot_soft">Mulai ulang cepat</string>
->>>>>>> ac7dfbdc393ab43390655ff439d1e1542f7048d7
   <!-- Title of dialog to confirm rebooting. -->
   <string name="reboot_title">Mulai ulang</string>
   <!-- Reboot Confirmation Dialog.  When the user chooses to reboot the device, there will
@@ -77,7 +65,7 @@
   <string name="reboot_confirm" product="tablet">Tablet anda akan dimulai ulang.</string>
   <string name="reboot_confirm" product="default">Ponsel anda akan mulai ulang.</string>
   <!-- Reboot Progress Dialog. This is shown if the user chooses to reboot the phone. -->
-  <string name="reboot_progress">Membut ulang\u2026</string>
+  <string name="reboot_progress">Memulai ulang\u2026</string>
   <!-- Long-press back kill application -->
   <string name="app_killed_message">Aplikasi dimatikan</string>
   <!-- ADB over network notification -->
