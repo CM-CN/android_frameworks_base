@@ -92,7 +92,6 @@ public class StatusBarManager {
 
     public static final int CAMERA_LAUNCH_SOURCE_WIGGLE = 0;
     public static final int CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP = 1;
-    public static final int CAMERA_LAUNCH_SOURCE_SCREEN_GESTURE = 2;
 
     private Context mContext;
     private IStatusBarService mService;
@@ -124,8 +123,7 @@ public class StatusBarManager {
                 svc.disable(what, mToken, mContext.getPackageName());
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -142,8 +140,7 @@ public class StatusBarManager {
                 svc.disable2(what, mToken, mContext.getPackageName());
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -157,8 +154,7 @@ public class StatusBarManager {
                 svc.expandNotificationsPanel();
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
     
@@ -172,8 +168,7 @@ public class StatusBarManager {
                 svc.collapsePanels();
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -181,14 +176,20 @@ public class StatusBarManager {
      * Expand the settings panel.
      */
     public void expandSettingsPanel() {
+        expandSettingsPanel(null);
+    }
+
+    /**
+     * Expand the settings panel and open a subPanel, pass null to just open the settings panel.
+     */
+    public void expandSettingsPanel(String subPanel) {
         try {
             final IStatusBarService svc = getService();
             if (svc != null) {
-                svc.expandSettingsPanel();
+                svc.expandSettingsPanel(subPanel);
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -200,8 +201,7 @@ public class StatusBarManager {
                     contentDescription);
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -212,8 +212,7 @@ public class StatusBarManager {
                 svc.removeIcon(slot);
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -224,8 +223,7 @@ public class StatusBarManager {
                 svc.setIconVisibility(slot, visible);
             }
         } catch (RemoteException ex) {
-            // system process is dead anyway.
-            throw new RuntimeException(ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 

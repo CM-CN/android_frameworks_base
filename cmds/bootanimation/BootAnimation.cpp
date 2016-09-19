@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2007 The Android Open Source Project
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +24,6 @@
 #include <utils/misc.h>
 #include <signal.h>
 #include <time.h>
-#include <pthread.h>
-#include <sys/select.h>
-#include <sys/syscall.h>
 
 #include <cutils/properties.h>
 
@@ -58,28 +54,14 @@
 #include <GLES/glext.h>
 #include <EGL/eglext.h>
 
-#include <media/AudioSystem.h>
-#include <media/mediaplayer.h>
-#include <media/IMediaHTTPService.h>
-
 #include "BootAnimation.h"
 #include "AudioPlayer.h"
+
+#include <private/regionalization/Environment.h>
 
 #define OEM_BOOTANIMATION_FILE "/oem/media/bootanimation.zip"
 #define SYSTEM_BOOTANIMATION_FILE "/system/media/bootanimation.zip"
 #define SYSTEM_ENCRYPTED_BOOTANIMATION_FILE "/system/media/bootanimation-encrypted.zip"
-#define THEME_BOOTANIMATION_FILE "/data/system/theme/bootanimation.zip"
-
-#define OEM_SHUTDOWN_ANIMATION_FILE "/oem/media/shutdownanimation.zip"
-#define SYSTEM_SHUTDOWN_ANIMATION_FILE "/system/media/shutdownanimation.zip"
-#define SYSTEM_ENCRYPTED_SHUTDOWN_ANIMATION_FILE "/system/media/shutdownanimation-encrypted.zip"
-#define THEME_SHUTDOWN_ANIMATION_FILE "/data/system/theme/shutdownanimation.zip"
-
-#define OEM_BOOT_MUSIC_FILE "/oem/media/boot.wav"
-#define SYSTEM_BOOT_MUSIC_FILE "/system/media/boot.wav"
-
-#define OEM_SHUTDOWN_MUSIC_FILE "/oem/media/shutdown.wav"
-#define SYSTEM_SHUTDOWN_MUSIC_FILE "/system/media/shutdown.wav"
 
 #define EXIT_PROP_NAME "service.bootanim.exit"
 
@@ -89,101 +71,11 @@ static const int ANIM_ENTRY_NAME_MAX = 256;
 
 // ---------------------------------------------------------------------------
 
-static pthread_mutex_t mp_lock;
-static pthread_cond_t mp_cond;
-static bool isMPlayerPrepared = false;
-static bool isMPlayerCompleted = false;
-
-#ifdef MULTITHREAD_DECODE
-static const int MAX_DECODE_THREADS = 2;
-static const int MAX_DECODE_CACHE = 3;
-#endif
-
-class MPlayerListener : public MediaPlayerListener
-{
-    void notify(int msg, int /*ext1*/, int /*ext2*/, const Parcel * /*obj*/)
-    {
-        switch (msg) {
-        case MEDIA_NOP: // interface test message
-            break;
-        case MEDIA_PREPARED:
-            pthread_mutex_lock(&mp_lock);
-            isMPlayerPrepared = true;
-            pthread_cond_signal(&mp_cond);
-            pthread_mutex_unlock(&mp_lock);
-            break;
-        case MEDIA_PLAYBACK_COMPLETE:
-            pthread_mutex_lock(&mp_lock);
-            isMPlayerCompleted = true;
-            pthread_cond_signal(&mp_cond);
-            pthread_mutex_unlock(&mp_lock);
-            break;
-        default:
-            break;
-        }
-    }
-};
-
-static unsigned long getFreeMemory(void)
-{
-    int fd = open("/proc/meminfo", O_RDONLY);
-    const char* const sums[] = { "MemFree:", "Cached:", NULL };
-    const size_t sumsLen[] = { strlen("MemFree:"), strlen("Cached:"), 0 };
-    unsigned int num = 2;
-
-    if (fd < 0) {
-        ALOGW("Unable to open /proc/meminfo");
-        return -1;
-    }
-
-    char buffer[256];
-    const int len = read(fd, buffer, sizeof(buffer)-1);
-    close(fd);
-
-    if (len < 0) {
-        ALOGW("Unable to read /proc/meminfo");
-        return -1;
-    }
-    buffer[len] = 0;
-
-    size_t numFound = 0;
-    unsigned long mem = 0;
-
-    char* p = buffer;
-    while (*p && numFound < num) {
-        int i = 0;
-        while (sums[i]) {
-            if (strncmp(p, sums[i], sumsLen[i]) == 0) {
-                p += sumsLen[i];
-                while (*p == ' ') p++;
-                char* num = p;
-                while (*p >= '0' && *p <= '9') p++;
-                if (*p != 0) {
-                    *p = 0;
-                    p++;
-                    if (*p == 0) p--;
-                }
-                mem += atoll(num);
-                numFound++;
-                break;
-            }
-            i++;
-        }
-        p++;
-    }
-
-    return numFound > 0 ? mem : -1;
-}
-
-BootAnimation::BootAnimation() : Thread(false), mZip(NULL)
-{
+BootAnimation::BootAnimation() : Thread(false), mClockEnabled(true) {
     mSession = new SurfaceComposerClient();
 }
 
 BootAnimation::~BootAnimation() {
-    if (mZip != NULL) {
-        delete mZip;
-    }
 }
 
 void BootAnimation::onFirstRef() {
@@ -268,42 +160,33 @@ status_t BootAnimation::initTexture(Texture* texture, AssetManager& assets,
     return NO_ERROR;
 }
 
-SkBitmap* BootAnimation::decode(const Animation::Frame& frame)
+status_t BootAnimation::initTexture(const Animation::Frame& frame)
 {
+    //StopWatch watch("blah");
 
-    SkBitmap *bitmap = NULL;
+    SkBitmap bitmap;
     SkMemoryStream  stream(frame.map->getDataPtr(), frame.map->getDataLength());
     SkImageDecoder* codec = SkImageDecoder::Factory(&stream);
     if (codec != NULL) {
-        bitmap = new SkBitmap();
         codec->setDitherImage(false);
-        codec->decode(&stream, bitmap,
-                #ifdef USE_565
-                kRGB_565_SkColorType,
-                #else
+        codec->decode(&stream, &bitmap,
                 kN32_SkColorType,
-                #endif
                 SkImageDecoder::kDecodePixels_Mode);
         delete codec;
     }
 
-    return bitmap;
-}
+    // FileMap memory is never released until application exit.
+    // Release it now as the texture is already loaded and the memory used for
+    // the packed resource can be released.
+    delete frame.map;
 
-status_t BootAnimation::initTexture(const Animation::Frame& frame)
-{
-    //StopWatch watch("blah");
-    return initTexture(decode(frame));
-}
+    // ensure we can call getPixels(). No need to call unlock, since the
+    // bitmap will go out of scope when we return from this method.
+    bitmap.lockPixels();
 
-status_t BootAnimation::initTexture(SkBitmap *bitmap)
-{
-    // ensure we can call getPixels().
-    bitmap->lockPixels();
-
-    const int w = bitmap->width();
-    const int h = bitmap->height();
-    const void* p = bitmap->getPixels();
+    const int w = bitmap.width();
+    const int h = bitmap.height();
+    const void* p = bitmap.getPixels();
 
     GLint crop[4] = { 0, h, w, -h };
     int tw = 1 << (31 - __builtin_clz(w));
@@ -311,7 +194,7 @@ status_t BootAnimation::initTexture(SkBitmap *bitmap)
     if (tw < w) tw <<= 1;
     if (th < h) th <<= 1;
 
-    switch (bitmap->colorType()) {
+    switch (bitmap.colorType()) {
         case kN32_SkColorType:
             if (tw != w || th != h) {
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0, GL_RGBA,
@@ -341,9 +224,36 @@ status_t BootAnimation::initTexture(SkBitmap *bitmap)
 
     glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_CROP_RECT_OES, crop);
 
-    bitmap->unlockPixels();
-    delete bitmap;
     return NO_ERROR;
+}
+
+
+// Get bootup Animation File
+// Parameter: ImageID: IMG_OEM IMG_SYS IMG_ENC
+// Return Value : File path
+const char *BootAnimation::getAnimationFileName(ImageID image)
+{
+    const char *fileName[3] = { OEM_BOOTANIMATION_FILE,
+            SYSTEM_BOOTANIMATION_FILE,
+            SYSTEM_ENCRYPTED_BOOTANIMATION_FILE };
+
+    // Load animations of Carrier through regionalization environment
+    if (Environment::isSupported()) {
+        Environment* environment = new Environment();
+        const char* animFile = environment->getMediaFile(
+                Environment::ANIMATION_TYPE, Environment::BOOT_STATUS);
+        ALOGE("Get Carrier Animation type: %d,status:%d", Environment::ANIMATION_TYPE,Environment::BOOT_STATUS);
+        if (animFile != NULL && strcmp(animFile, "") != 0) {
+           return animFile;
+        }else{
+           ALOGD("Get Carrier Animation file: %s failed", animFile);
+        }
+        delete environment;
+    }else{
+           ALOGE("Get Carrier Animation file,since it's not support carrier");
+    }
+
+    return fileName[image];
 }
 
 status_t BootAnimation::readyToRun() {
@@ -355,18 +265,6 @@ status_t BootAnimation::readyToRun() {
     status_t status = SurfaceComposerClient::getDisplayInfo(dtoken, &dinfo);
     if (status)
         return -1;
-    char value[PROPERTY_VALUE_MAX];
-    property_get("persist.panel.orientation", value, "0");
-    int orient = atoi(value) / 90;
-
-    if(orient == eOrientation90 || orient == eOrientation270) {
-        int temp = dinfo.h;
-        dinfo.h = dinfo.w;
-        dinfo.w = temp;
-    }
-
-    Rect destRect(dinfo.w, dinfo.h);
-    mSession->setDisplayProjection(dtoken, orient, destRect, destRect);
 
     // create the native surface
     sp<SurfaceControl> control = session()->createSurface(String8("BootAnimation"),
@@ -417,53 +315,17 @@ status_t BootAnimation::readyToRun() {
     char decrypt[PROPERTY_VALUE_MAX];
     property_get("vold.decrypt", decrypt, "");
 
-    // Use customized resources for boot and showdown animation
-    // instead of system predefined boot animation files.
     bool encryptedAnimation = atoi(decrypt) != 0 || !strcmp("trigger_restart_min_framework", decrypt);
 
-    ZipFileRO* zipFile = NULL;
-    if ((encryptedAnimation &&
-            (access(getAnimationFileName(IMG_ENC), R_OK) == 0) &&
-            ((zipFile = ZipFileRO::open(getAnimationFileName(IMG_ENC))) != NULL)) ||
-
-            ((access(getAnimationFileName(IMG_THM), R_OK) == 0) &&
-            ((zipFile = ZipFileRO::open(getAnimationFileName(IMG_THM))) != NULL)) ||
-
-
-            ((access(getAnimationFileName(IMG_DATA), R_OK) == 0) &&
-            ((zipFile = ZipFileRO::open(getAnimationFileName(IMG_DATA))) != NULL)) ||
-
-            ((access(getAnimationFileName(IMG_SYS), R_OK) == 0) &&
-            ((zipFile = ZipFileRO::open(getAnimationFileName(IMG_SYS))) != NULL))) {
-        mZip = zipFile;
+    if (encryptedAnimation && (access(getAnimationFileName(IMG_ENC), R_OK) == 0)) {
+        mZipFileName = getAnimationFileName(IMG_ENC);
     }
-
-#ifdef PRELOAD_BOOTANIMATION
-    // Preload the bootanimation zip on memory, so we don't stutter
-    // when showing the animation
-    FILE* fd;
-    if (encryptedAnimation && access(SYSTEM_ENCRYPTED_BOOTANIMATION_FILE, R_OK) == 0)
-        fd = fopen(SYSTEM_ENCRYPTED_BOOTANIMATION_FILE, "r");
-    else if (access(OEM_BOOTANIMATION_FILE, R_OK) == 0)
-        fd = fopen(OEM_BOOTANIMATION_FILE, "r");
-    else if (access(SYSTEM_BOOTANIMATION_FILE, R_OK) == 0)
-        fd = fopen(SYSTEM_BOOTANIMATION_FILE, "r");
-    else
-        return NO_ERROR;
-
-    if (fd != NULL) {
-        // Since including fcntl.h doesn't give us the wrapper, use the syscall.
-        // 32 bits takes LO/HI offset (we don't care about endianness of 0).
-#if defined(__aarch64__) || defined(__x86_64__)
-        if (syscall(__NR_readahead, fd, 0, INT_MAX))
-#else
-        if (syscall(__NR_readahead, fd, 0, 0, INT_MAX))
-#endif
-            ALOGW("Unable to cache the animation");
-        fclose(fd);
+    else if (access(getAnimationFileName(IMG_OEM), R_OK) == 0) {
+        mZipFileName = getAnimationFileName(IMG_OEM);
     }
-#endif
-
+    else if (access(getAnimationFileName(IMG_SYS), R_OK) == 0) {
+        mZipFileName = getAnimationFileName(IMG_SYS);
+    }
     return NO_ERROR;
 }
 
@@ -472,7 +334,7 @@ bool BootAnimation::threadLoop()
     bool r;
     // We have no bootanimation file, so we use the stock android logo
     // animation.
-    if (mZip == NULL) {
+    if (mZipFileName.isEmpty()) {
         r = android();
     } else {
         r = movie();
@@ -592,16 +454,17 @@ static bool parseColor(const char str[7], float color[3]) {
     return true;
 }
 
-bool BootAnimation::readFile(const char* name, String8& outString)
+
+static bool readFile(ZipFileRO* zip, const char* name, String8& outString)
 {
-    ZipEntryRO entry = mZip->findEntryByName(name);
+    ZipEntryRO entry = zip->findEntryByName(name);
     ALOGE_IF(!entry, "couldn't find %s", name);
     if (!entry) {
         return false;
     }
 
-    FileMap* entryMap = mZip->createEntryFileMap(entry);
-    mZip->releaseEntry(entry);
+    FileMap* entryMap = zip->createEntryFileMap(entry);
+    zip->releaseEntry(entry);
     ALOGE_IF(!entryMap, "entryMap is null");
     if (!entryMap) {
         return false;
@@ -612,19 +475,81 @@ bool BootAnimation::readFile(const char* name, String8& outString)
     return true;
 }
 
-bool BootAnimation::movie()
+// The time glyphs are stored in a single image of height 64 pixels. Each digit is 40 pixels wide,
+// and the colon character is half that at 20 pixels. The glyph order is '0123456789:'.
+// We render 24 hour time.
+void BootAnimation::drawTime(const Texture& clockTex, const int yPos) {
+    static constexpr char TIME_FORMAT[] = "%H:%M";
+    static constexpr int TIME_LENGTH = sizeof(TIME_FORMAT);
+
+    static constexpr int DIGIT_HEIGHT = 64;
+    static constexpr int DIGIT_WIDTH = 40;
+    static constexpr int COLON_WIDTH = DIGIT_WIDTH / 2;
+    static constexpr int TIME_WIDTH = (DIGIT_WIDTH * 4) + COLON_WIDTH;
+
+    if (clockTex.h < DIGIT_HEIGHT || clockTex.w < (10 * DIGIT_WIDTH + COLON_WIDTH)) {
+        ALOGE("Clock texture is too small; abandoning boot animation clock");
+        mClockEnabled = false;
+        return;
+    }
+
+    time_t rawtime;
+    time(&rawtime);
+    struct tm* timeInfo = localtime(&rawtime);
+
+    char timeBuff[TIME_LENGTH];
+    size_t length = strftime(timeBuff, TIME_LENGTH, TIME_FORMAT, timeInfo);
+
+    if (length != TIME_LENGTH - 1) {
+        ALOGE("Couldn't format time; abandoning boot animation clock");
+        mClockEnabled = false;
+        return;
+    }
+
+    glEnable(GL_BLEND);  // Allow us to draw on top of the animation
+    glBindTexture(GL_TEXTURE_2D, clockTex.name);
+
+    int xPos = (mWidth - TIME_WIDTH) / 2;
+    int cropRect[4] = { 0, DIGIT_HEIGHT, DIGIT_WIDTH, -DIGIT_HEIGHT };
+
+    for (int i = 0; i < TIME_LENGTH - 1; i++) {
+        char c = timeBuff[i];
+        int width = DIGIT_WIDTH;
+        int pos = c - '0';  // Position in the character list
+        if (pos < 0 || pos > 10) {
+            continue;
+        }
+        if (c == ':') {
+            width = COLON_WIDTH;
+        }
+
+        // Crop the texture to only the pixels in the current glyph
+        int left = pos * DIGIT_WIDTH;
+        cropRect[0] = left;
+        cropRect[2] = width;
+        glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_CROP_RECT_OES, cropRect);
+
+        glDrawTexiOES(xPos, yPos, 0, width, DIGIT_HEIGHT);
+
+        xPos += width;
+    }
+
+    glDisable(GL_BLEND);  // Return to the animation's default behaviour
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+bool BootAnimation::parseAnimationDesc(Animation& animation)
 {
-    char value[PROPERTY_VALUE_MAX];
     String8 desString;
 
-    if (!readFile("desc.txt", desString)) {
+    if (!readFile(animation.zip, "desc.txt", desString)) {
         return false;
     }
     char const* s = desString.string();
 
     // Create and initialize an AudioPlayer if we have an audio_conf.txt file
     String8 audioConf;
-    if (readFile("audio_conf.txt", audioConf)) {
+    if (readFile(animation.zip, "audio_conf.txt", audioConf)) {
         mAudioPlayer = new AudioPlayer;
         if (!mAudioPlayer->init(audioConf.string())) {
             ALOGE("mAudioPlayer.init failed");
@@ -632,15 +557,18 @@ bool BootAnimation::movie()
         }
     }
 
-    Animation animation;
-
     // Parse the description file
     for (;;) {
         const char* endl = strstr(s, "\n");
         if (endl == NULL) break;
         String8 line(s, endl - s);
         const char* l = line.string();
-        int fps, width, height, count, pause;
+        int fps = 0;
+        int width = 0;
+        int height = 0;
+        int count = 0;
+        int pause = 0;
+        int clockPosY = -1;
         char path[ANIM_ENTRY_NAME_MAX];
         char color[7] = "000000"; // default to black if unspecified
 
@@ -650,15 +578,17 @@ bool BootAnimation::movie()
             animation.width = width;
             animation.height = height;
             animation.fps = fps;
-        }
-        else if (sscanf(l, " %c %d %d %s #%6s", &pathType, &count, &pause, path, color) >= 4) {
-            // ALOGD("> type=%c, count=%d, pause=%d, path=%s, color=%s", pathType, count, pause, path, color);
+        } else if (sscanf(l, " %c %d %d %s #%6s %d",
+                          &pathType, &count, &pause, path, color, &clockPosY) >= 4) {
+            // ALOGD("> type=%c, count=%d, pause=%d, path=%s, color=%s, clockPosY=%d", pathType, count, pause, path, color, clockPosY);
             Animation::Part part;
             part.playUntilComplete = pathType == 'c';
             part.count = count;
             part.pause = pause;
             part.path = path;
+            part.clockPosY = clockPosY;
             part.audioFile = NULL;
+            part.animation = NULL;
             if (!parseColor(color, part.backgroundColor)) {
                 ALOGE("> invalid color '#%s'", color);
                 part.backgroundColor[0] = 0.0f;
@@ -667,13 +597,29 @@ bool BootAnimation::movie()
             }
             animation.parts.add(part);
         }
-
+        else if (strcmp(l, "$SYSTEM") == 0) {
+            // ALOGD("> SYSTEM");
+            Animation::Part part;
+            part.playUntilComplete = false;
+            part.count = 1;
+            part.pause = 0;
+            part.audioFile = NULL;
+            part.animation = loadAnimation(String8(SYSTEM_BOOTANIMATION_FILE));
+            if (part.animation != NULL)
+                animation.parts.add(part);
+        }
         s = ++endl;
     }
 
+    return true;
+}
+
+bool BootAnimation::preloadZip(Animation& animation)
+{
     // read all the data structures
     const size_t pcount = animation.parts.size();
     void *cookie = NULL;
+    ZipFileRO* mZip = animation.zip;
     if (!mZip->startIteration(&cookie)) {
         return false;
     }
@@ -719,13 +665,22 @@ bool BootAnimation::movie()
 
     mZip->endIteration(cookie);
 
-#ifndef CONTINUOUS_SPLASH
+    return true;
+}
+
+bool BootAnimation::movie()
+{
+
+    Animation* animation = loadAnimation(mZipFileName);
+    if (animation == NULL)
+        return false;
+
+    // Blend required to draw time on top of animation frames.
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glShadeModel(GL_FLAT);
     glDisable(GL_DITHER);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
-
-#endif
 
     glBindTexture(GL_TEXTURE_2D, 0);
     glEnable(GL_TEXTURE_2D);
@@ -735,6 +690,25 @@ bool BootAnimation::movie()
     glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+    bool clockTextureInitialized = false;
+    if (mClockEnabled) {
+        clockTextureInitialized = (initTexture(&mClock, mAssets, "images/clock64.png") == NO_ERROR);
+        mClockEnabled = clockTextureInitialized;
+    }
+
+    playAnimation(*animation);
+    releaseAnimation(animation);
+
+    if (clockTextureInitialized) {
+        glDeleteTextures(1, &mClock.name);
+    }
+
+    return false;
+}
+
+bool BootAnimation::playAnimation(const Animation& animation)
+{
+    const size_t pcount = animation.parts.size();
     const int xc = (mWidth - animation.width) / 2;
     const int yc = ((mHeight - animation.height) / 2);
     nsecs_t frameDuration = s2ns(1) / animation.fps;
@@ -742,43 +716,17 @@ bool BootAnimation::movie()
     Region clearReg(Rect(mWidth, mHeight));
     clearReg.subtractSelf(Rect(xc, yc, xc+animation.width, yc+animation.height));
 
-    pthread_mutex_init(&mp_lock, NULL);
-    pthread_condattr_t attr;
-    pthread_condattr_init(&attr);
-    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-    pthread_cond_init(&mp_cond, &attr);
-
     for (size_t i=0 ; i<pcount ; i++) {
         const Animation::Part& part(animation.parts[i]);
         const size_t fcount = part.frames.size();
-
-        // can be 1, 0, or not set
-        #ifdef NO_TEXTURE_CACHE
-        const int noTextureCache = NO_TEXTURE_CACHE;
-        #else
-        const int noTextureCache =
-                ((animation.width * animation.height * fcount) > 48 * 1024 * 1024) ? 1 : 0;
-        #endif
-
         glBindTexture(GL_TEXTURE_2D, 0);
 
-        /*calculate if we need to runtime save memory
-        * condition: runtime free memory is less than the textures that will used.
-        * needSaveMem default to be false
-        */
-        GLint mMaxTextureSize;
-        bool needSaveMem = false;
-        GLuint mTextureid;
-        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &mMaxTextureSize);
-        //ALOGD("freemem:%ld, %d", getFreeMemory(), mMaxTextureSize);
-        if(getFreeMemory() < mMaxTextureSize * mMaxTextureSize * fcount / 1024 || noTextureCache) {
-            ALOGD("Use save memory method, maybe small fps in actual.");
-            needSaveMem = true;
-            glGenTextures(1, &mTextureid);
-            glBindTexture(GL_TEXTURE_2D, mTextureid);
-            glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
+        // Handle animation package
+        if (part.animation != NULL) {
+            playAnimation(*part.animation);
+            if (exitPending())
+                break;
+            continue; //to next part
         }
 
         for (int r=0 ; !part.count || r<part.count ; r++) {
@@ -797,32 +745,20 @@ bool BootAnimation::movie()
                     part.backgroundColor[2],
                     1.0f);
 
-#ifdef MULTITHREAD_DECODE
-            FrameManager *frameManager = NULL;
-            if (r == 0 || needSaveMem) {
-                frameManager = new FrameManager(MAX_DECODE_THREADS,
-                    MAX_DECODE_CACHE, part.frames);
-            }
-#endif
-
             for (size_t j=0 ; j<fcount && (!exitPending() || part.playUntilComplete) ; j++) {
                 const Animation::Frame& frame(part.frames[j]);
                 nsecs_t lastFrame = systemTime();
 
-                if (r > 0 && !needSaveMem) {
+                if (r > 0) {
                     glBindTexture(GL_TEXTURE_2D, frame.tid);
                 } else {
-                    if (!needSaveMem && part.count != 1) {
+                    if (part.count != 1) {
                         glGenTextures(1, &frame.tid);
                         glBindTexture(GL_TEXTURE_2D, frame.tid);
                         glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                         glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                     }
-#ifdef MULTITHREAD_DECODE
-                    initTexture(frameManager->next());
-#else
                     initTexture(frame);
-#endif
                 }
 
                 if (!clearReg.isEmpty()) {
@@ -841,6 +777,10 @@ bool BootAnimation::movie()
                 // which is equivalent to mHeight - (yc + animation.height)
                 glDrawTexiOES(xc, mHeight - (yc + animation.height),
                               0, animation.width, animation.height);
+                if (mClockEnabled && part.clockPosY >= 0) {
+                    drawTime(mClock, part.clockPosY);
+                }
+
                 eglSwapBuffers(mDisplay, mSurface);
 
                 nsecs_t now = systemTime();
@@ -863,302 +803,60 @@ bool BootAnimation::movie()
 
             usleep(part.pause * ns2us(frameDuration));
 
-#ifdef MULTITHREAD_DECODE
-            if (frameManager) {
-                delete frameManager;
-            }
-#endif
-
             // For infinite parts, we've now played them at least once, so perhaps exit
             if(exitPending() && !part.count)
                 break;
         }
 
         // free the textures for this part
-        if (!needSaveMem && part.count != 1) {
+        if (part.count != 1) {
             for (size_t j=0 ; j<fcount ; j++) {
                 const Animation::Frame& frame(part.frames[j]);
                 glDeleteTextures(1, &frame.tid);
             }
         }
-
-        if (needSaveMem) {
-            glDeleteTextures(1, &mTextureid);
-        }
-
     }
-
-    property_get("persist.sys.silent", value, "null");
-    if (strncmp(value, "1", 1) != 0) {
-       ALOGD("playing boot audio here");
-       playBackgroundMusic();
-    }
-
-    if (isMPlayerPrepared) {
-        ALOGD("waiting for media player to complete.");
-        struct timespec timeout;
-        clock_gettime(CLOCK_MONOTONIC, &timeout);
-        timeout.tv_sec += 5; //timeout after 5s.
-
-        pthread_mutex_lock(&mp_lock);
-        while (!isMPlayerCompleted) {
-            int err = pthread_cond_timedwait(&mp_cond, &mp_lock, &timeout);
-            if (err == ETIMEDOUT) {
-                break;
-            }
-        }
-        pthread_mutex_unlock(&mp_lock);
-        ALOGD("media player is completed.");
-    }
-
-    pthread_cond_destroy(&mp_cond);
-    pthread_mutex_destroy(&mp_lock);
-
-    return false;
+    return true;
 }
 
-const char *BootAnimation::getAnimationFileName(ImageID image)
+void BootAnimation::releaseAnimation(Animation* animation) const
 {
-    const char *fileName[2][4] = { { OEM_BOOTANIMATION_FILE,
-            SYSTEM_BOOTANIMATION_FILE,
-            SYSTEM_ENCRYPTED_BOOTANIMATION_FILE,
-            THEME_BOOTANIMATION_FILE }, {
-            OEM_SHUTDOWN_ANIMATION_FILE,
-            SYSTEM_SHUTDOWN_ANIMATION_FILE,
-            SYSTEM_ENCRYPTED_SHUTDOWN_ANIMATION_FILE,
-            THEME_SHUTDOWN_ANIMATION_FILE} };
-    int state;
-    char sku[PROPERTY_VALUE_MAX];
-    char skusuffix[PATH_MAX];
-
-    state = checkBootState() ? 0 : 1;
-
-    property_get("ro.prebundled.mcc", sku, "000");
-    sprintf(skusuffix,"-%s",sku);
-
-    String16 skuPath(fileName[state][image]);
-    skuPath.insert(skuPath.size()-4,String16(skusuffix));
-
-    if (access(String8(skuPath).string(), R_OK) == 0)
-        return (char *)String8(skuPath).string();
-
-    return fileName[state][image];
+    for (Vector<Animation::Part>::iterator it = animation->parts.begin(),
+         e = animation->parts.end(); it != e; ++it) {
+        if (it->animation)
+            releaseAnimation(it->animation);
+    }
+    if (animation->zip)
+        delete animation->zip;
+    delete animation;
 }
 
-const char *BootAnimation::getBootRingtoneFileName(ImageID image)
+BootAnimation::Animation* BootAnimation::loadAnimation(const String8& fn)
 {
-    if (image == IMG_ENC) {
+    if (mLoadedFiles.indexOf(fn) >= 0) {
+        ALOGE("File \"%s\" is already loaded. Cyclic ref is not allowed",
+            fn.string());
+        return NULL;
+    }
+    ZipFileRO *zip = ZipFileRO::open(fn);
+    if (zip == NULL) {
+        ALOGE("Failed to open animation zip \"%s\": %s",
+            fn.string(), strerror(errno));
         return NULL;
     }
 
-    const char *fileName[2][2] = { { OEM_BOOT_MUSIC_FILE,
-            SYSTEM_BOOT_MUSIC_FILE }, {
-            OEM_SHUTDOWN_MUSIC_FILE,
-            SYSTEM_SHUTDOWN_MUSIC_FILE } };
-    int state;
+    Animation *animation =  new Animation;
+    animation->fileName = fn;
+    animation->zip = zip;
+    mLoadedFiles.add(animation->fileName);
 
-    state = checkBootState() ? 0 : 1;
+    parseAnimationDesc(*animation);
+    preloadZip(*animation);
 
-    return fileName[state][image];
+    mLoadedFiles.remove(fn);
+    return animation;
 }
-
-static void* playMusic(void* arg)
-{
-    int index = 0;
-    char *fileName = (char *)arg;
-    sp<MediaPlayer> mp = new MediaPlayer();
-    sp<MPlayerListener> mListener = new MPlayerListener();
-    if (mp != NULL) {
-        ALOGD("starting to play %s", fileName);
-        mp->setListener(mListener);
-
-        if (mp->setDataSource(NULL, fileName, NULL) == NO_ERROR) {
-            mp->setAudioStreamType(AUDIO_STREAM_ENFORCED_AUDIBLE);
-            mp->prepare();
-        } else {
-            ALOGE("failed to setDataSource for %s", fileName);
-            return NULL;
-        }
-
-        //waiting for media player is prepared.
-        pthread_mutex_lock(&mp_lock);
-        while (!isMPlayerPrepared) {
-            pthread_cond_wait(&mp_cond, &mp_lock);
-        }
-        pthread_mutex_unlock(&mp_lock);
-
-        audio_devices_t device = AudioSystem::getDevicesForStream(AUDIO_STREAM_ENFORCED_AUDIBLE);
-        AudioSystem::initStreamVolume(AUDIO_STREAM_ENFORCED_AUDIBLE,0,7);
-        AudioSystem::setStreamVolumeIndex(AUDIO_STREAM_ENFORCED_AUDIBLE, 7, device);
-
-        AudioSystem::getStreamVolumeIndex(AUDIO_STREAM_ENFORCED_AUDIBLE, &index, device);
-        if (index != 0) {
-            ALOGD("playing %s", fileName);
-            mp->seekTo(0);
-            mp->start();
-        } else {
-            ALOGW("current volume is zero.");
-        }
-    }
-    return NULL;
-}
-
-void BootAnimation::playBackgroundMusic(void)
-{
-    //Shutdown music is playing in ShutdownThread.java
-    if (!checkBootState()) {
-        return;
-    }
-
-    /* Make sure sound cards are populated */
-    FILE* fp = NULL;
-    if ((fp = fopen("/proc/asound/cards", "r")) == NULL) {
-        ALOGW("Cannot open /proc/asound/cards file to get sound card info.");
-    }
-
-    char value[PROPERTY_VALUE_MAX];
-    property_get("qcom.audio.init", value, "null");
-    if (strncmp(value, "complete", 8) != 0) {
-        ALOGW("Audio service is not initiated.");
-    }
-
-    fclose(fp);
-
-    const char *fileName;
-    if (((fileName = getBootRingtoneFileName(IMG_DATA)) != NULL && access(fileName, R_OK) == 0) ||
-                ((fileName = getBootRingtoneFileName(IMG_SYS)) != NULL
-                && access(fileName, R_OK) == 0)) {
-        pthread_t tid;
-        pthread_create(&tid, NULL, playMusic, (void *)fileName);
-        pthread_join(tid, NULL);
-    }
-}
-bool BootAnimation::checkBootState(void)
-{
-    char value[PROPERTY_VALUE_MAX];
-    bool ret = true;
-
-    property_get("sys.shutdown.requested", value, "null");
-    if (strncmp(value, "null", 4) != 0) {
-        ret = false;
-    }
-
-    return ret;
-}
-
-#ifdef MULTITHREAD_DECODE
-
-FrameManager::FrameManager(int numThreads, size_t maxSize, const SortedVector<BootAnimation::Animation::Frame>& frames) :
-    mMaxSize(maxSize),
-    mFrameCounter(0),
-    mNextIdx(0),
-    mFrames(frames),
-    mExit(false)
-{
-    pthread_mutex_init(&mBitmapsMutex, NULL);
-    pthread_cond_init(&mSpaceAvailableCondition, NULL);
-    pthread_cond_init(&mBitmapReadyCondition, NULL);
-    for (int i = 0; i < numThreads; i++) {
-        DecodeThread *thread = new DecodeThread(this);
-        thread->run("bootanimation", PRIORITY_URGENT_DISPLAY);
-        mThreads.add(thread);
-    }
-}
-
-FrameManager::~FrameManager()
-{
-    mExit = true;
-    pthread_cond_broadcast(&mSpaceAvailableCondition);
-    pthread_cond_broadcast(&mBitmapReadyCondition);
-    for (size_t i = 0; i < mThreads.size(); i++) {
-        mThreads.itemAt(i)->requestExitAndWait();
-    }
-
-    // Any bitmap left in the queue won't get cleaned up by
-    // the consumer.  Clean up now.
-    for(size_t i = 0; i < mDecodedFrames.size(); i++) {
-        delete mDecodedFrames[i].bitmap;
-    }
-}
-
-SkBitmap* FrameManager::next()
-{
-    pthread_mutex_lock(&mBitmapsMutex);
-
-    while(mDecodedFrames.size() == 0 ||
-            mDecodedFrames.itemAt(0).idx != mNextIdx) {
-        pthread_cond_wait(&mBitmapReadyCondition, &mBitmapsMutex);
-    }
-    DecodeWork work = mDecodedFrames.itemAt(0);
-    mDecodedFrames.removeAt(0);
-    mNextIdx++;
-    pthread_cond_signal(&mSpaceAvailableCondition);
-    pthread_mutex_unlock(&mBitmapsMutex);
-    // The caller now owns the bitmap
-    return work.bitmap;
-}
-
-FrameManager::DecodeWork FrameManager::getWork()
-{
-    DecodeWork work = {
-        .frame = NULL,
-        .bitmap = NULL,
-        .idx = 0
-    };
-
-    pthread_mutex_lock(&mBitmapsMutex);
-
-    while(mDecodedFrames.size() >= mMaxSize && !mExit) {
-        pthread_cond_wait(&mSpaceAvailableCondition, &mBitmapsMutex);
-    }
-
-    if (!mExit) {
-        work.frame = &mFrames.itemAt(mFrameCounter % mFrames.size());
-        work.idx = mFrameCounter;
-        mFrameCounter++;
-    }
-
-    pthread_mutex_unlock(&mBitmapsMutex);
-    return work;
-}
-
-void FrameManager::completeWork(DecodeWork work) {
-    size_t insertIdx;
-    pthread_mutex_lock(&mBitmapsMutex);
-
-    for(insertIdx = 0; insertIdx < mDecodedFrames.size(); insertIdx++) {
-        if (work.idx < mDecodedFrames.itemAt(insertIdx).idx) {
-            break;
-        }
-    }
-
-    mDecodedFrames.insertAt(work, insertIdx);
-    pthread_cond_signal(&mBitmapReadyCondition);
-
-    pthread_mutex_unlock(&mBitmapsMutex);
-}
-
-FrameManager::DecodeThread::DecodeThread(FrameManager* manager) :
-    Thread(false),
-    mManager(manager)
-{
-
-}
-
-bool FrameManager::DecodeThread::threadLoop()
-{
-    DecodeWork work = mManager->getWork();
-    if (work.frame != NULL) {
-        work.bitmap = BootAnimation::decode(*work.frame);
-        mManager->completeWork(work);
-        return true;
-    }
-
-    return false;
-}
-
-#endif
-
 // ---------------------------------------------------------------------------
 
-}; // namespace android
+}
+; // namespace android

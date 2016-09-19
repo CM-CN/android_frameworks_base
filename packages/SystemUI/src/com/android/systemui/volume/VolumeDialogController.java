@@ -29,7 +29,6 @@ import android.database.ContentObserver;
 import android.media.AudioManager;
 import android.media.AudioSystem;
 import android.media.IVolumeController;
-import android.media.ToneGenerator;
 import android.media.VolumePolicy;
 import android.media.session.MediaController.PlaybackInfo;
 import android.media.session.MediaSession.Token;
@@ -42,7 +41,6 @@ import android.os.RemoteException;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.service.notification.Condition;
-import android.service.notification.ZenModeConfig;
 import android.util.Log;
 import android.util.SparseArray;
 
@@ -54,8 +52,6 @@ import java.io.PrintWriter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-
-import cyanogenmod.providers.CMSettings;
 
 /**
  *  Source of truth for all state / events related to the volume dialog.  No presentation.
@@ -69,9 +65,6 @@ public class VolumeDialogController {
 
     private static final int DYNAMIC_STREAM_START_INDEX = 100;
     private static final int VIBRATE_HINT_DURATION = 50;
-
-    private static final int FREE_DELAY = 10000;
-    private static final int BEEP_DURATION = 150;
 
     private static final int[] STREAMS = {
         AudioSystem.STREAM_ALARM,
@@ -108,13 +101,10 @@ public class VolumeDialogController {
     private VolumePolicy mVolumePolicy;
     private boolean mShowDndTile = true;
 
-    private ToneGenerator mToneGenerators[];
-
     public VolumeDialogController(Context context, ComponentName component) {
         mContext = context.getApplicationContext();
         Events.writeEvent(mContext, Events.EVENT_COLLECTION_STARTED);
         mComponent = component;
-        mToneGenerators = new ToneGenerator[AudioSystem.getNumStreamTypes()];
         mWorkerThread = new HandlerThread(VolumeDialogController.class.getSimpleName());
         mWorkerThread.start();
         mWorker = new W(mWorkerThread.getLooper());
@@ -132,10 +122,6 @@ public class VolumeDialogController {
 
     public AudioManager getAudioManager() {
         return mAudio;
-    }
-
-    public ZenModeConfig getZenModeConfig() {
-        return mNoMan.getZenModeConfig();
     }
 
     public void dismiss() {
@@ -293,12 +279,11 @@ public class VolumeDialogController {
         return changed;
     }
 
-    private void onVolumeChangedW(int stream, int flags) {
+    private boolean onVolumeChangedW(int stream, int flags) {
         final boolean showUI = (flags & AudioManager.FLAG_SHOW_UI) != 0;
         final boolean fromKey = (flags & AudioManager.FLAG_FROM_KEY) != 0;
         final boolean showVibrateHint = (flags & AudioManager.FLAG_SHOW_VIBRATE_HINT) != 0;
         final boolean showSilentHint = (flags & AudioManager.FLAG_SHOW_SILENT_HINT) != 0;
-        final boolean playSound = (flags & AudioManager.FLAG_PLAY_SOUND) != 0;
         boolean changed = false;
         if (showUI) {
             changed |= updateActiveStreamW(stream);
@@ -318,22 +303,10 @@ public class VolumeDialogController {
         if (showSilentHint) {
             mCallbacks.onShowSilentHint();
         }
-        if (playSound) {
-            if ((flags & AudioManager.FLAG_PLAY_SOUND) != 0) {
-                mWorker.removeMessages(W.PLAY_SOUND);
-                mWorker.sendMessageDelayed(mWorker.obtainMessage(W.PLAY_SOUND, stream, flags),
-                        AudioSystem.PLAY_SOUND_DELAY);
-            }
-
-            if ((flags & AudioManager.FLAG_REMOVE_SOUND_AND_VIBRATE) != 0) {
-                mWorker.removeMessages(W.PLAY_SOUND);
-                onStopSoundsW();
-            }
-
-        }
         if (changed && fromKey) {
             Events.writeEvent(mContext, Events.EVENT_KEY, stream, lastAudibleStreamVolume);
         }
+        return changed;
     }
 
     private boolean updateActiveStreamW(int activeStream) {
@@ -370,8 +343,6 @@ public class VolumeDialogController {
         updateRingerModeExternalW(mAudio.getRingerMode());
         updateZenModeW();
         updateEffectsSuppressorW(mNoMan.getEffectsSuppressor());
-        updateZenModeConfigW();
-        updateLinkNotificationConfigW();
         mCallbacks.onStateChanged(mState);
     }
 
@@ -431,13 +402,6 @@ public class VolumeDialogController {
             return false;
         }
         mState.linkedNotification = linkNotificationWithVolume;
-        return true;
-    }
-
-    private boolean updateZenModeConfigW() {
-        final ZenModeConfig zenModeConfig = getZenModeConfig();
-        if (Objects.equals(mState.zenModeConfig, zenModeConfig)) return false;
-        mState.zenModeConfig = zenModeConfig;
         return true;
     }
 
@@ -590,9 +554,6 @@ public class VolumeDialogController {
         private static final int NOTIFY_VISIBLE = 12;
         private static final int USER_ACTIVITY = 13;
         private static final int SHOW_SAFETY_WARNING = 14;
-        private static final int PLAY_SOUND = 15;
-        private static final int STOP_SOUNDS = 16;
-        private static final int FREE_RESOURCES = 17;
 
         W(Looper looper) {
             super(looper);
@@ -615,9 +576,6 @@ public class VolumeDialogController {
                 case NOTIFY_VISIBLE: onNotifyVisibleW(msg.arg1 != 0); break;
                 case USER_ACTIVITY: onUserActivityW(); break;
                 case SHOW_SAFETY_WARNING: onShowSafetyWarningW(msg.arg1); break;
-                case PLAY_SOUND: onPlaySoundW(msg.arg1, msg.arg2); break;
-                case STOP_SOUNDS: onStopSoundsW(); break;
-                case FREE_RESOURCES: onFreeResourcesW(); break;
             }
         }
     }
@@ -747,66 +705,6 @@ public class VolumeDialogController {
     }
 
 
-    protected void onPlaySoundW(int streamType, int flags) {
-
-        // If preference is no sound - just exit here
-        if (CMSettings.System.getInt(mContext.getContentResolver(),
-                CMSettings.System.VOLUME_ADJUST_SOUNDS_ENABLED, 1) == 0) {
-            return;
-        }
-
-        if (mWorker.hasMessages(W.STOP_SOUNDS)) {
-            mWorker.removeMessages(W.STOP_SOUNDS);
-            // Force stop right now
-            onStopSoundsW();
-        }
-
-        ToneGenerator toneGen = getOrCreateToneGeneratorW(streamType);
-        if (toneGen != null) {
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP);
-            mWorker.sendMessageDelayed(mWorker.obtainMessage(W.STOP_SOUNDS), BEEP_DURATION);
-        }
-
-        mWorker.removeMessages(W.FREE_RESOURCES);
-        mWorker.sendMessageDelayed(mWorker.obtainMessage(W.FREE_RESOURCES), FREE_DELAY);
-    }
-
-    protected void onStopSoundsW() {
-        int numStreamTypes = AudioSystem.getNumStreamTypes();
-        for (int i = numStreamTypes - 1; i >= 0; i--) {
-            ToneGenerator toneGen = mToneGenerators[i];
-            if (toneGen != null) {
-                toneGen.stopTone();
-            }
-        }
-    }
-
-    private ToneGenerator getOrCreateToneGeneratorW(int streamType) {
-        if (mToneGenerators[streamType] == null) {
-            try {
-                mToneGenerators[streamType] = new ToneGenerator(streamType,
-                        ToneGenerator.MAX_VOLUME);
-            } catch (RuntimeException e) {
-                if (false) {
-                    Log.d(TAG, "ToneGenerator constructor failed with "
-                            + "RuntimeException: " + e);
-                }
-            }
-        }
-        return mToneGenerators[streamType];
-    }
-
-    protected void onFreeResourcesW() {
-        synchronized (this) {
-            for (int i = mToneGenerators.length - 1; i >= 0; i--) {
-                if (mToneGenerators[i] != null) {
-                    mToneGenerators[i].release();
-                }
-                mToneGenerators[i] = null;
-            }
-        }
-    }
-
     private final class SettingObserver extends ContentObserver {
         private final Uri SERVICE_URI = Settings.Secure.getUriFor(
                 Settings.Secure.VOLUME_CONTROLLER_SERVICE_COMPONENT);
@@ -850,9 +748,6 @@ public class VolumeDialogController {
             }
             if (ZEN_MODE_URI.equals(uri)) {
                 changed = updateZenModeW();
-            }
-            if (ZEN_MODE_CONFIG_URI.equals(uri)) {
-                changed = updateZenModeConfigW();
             }
             if (VOLUME_LINK_NOTIFICATION_URI.equals(uri)) {
                 changed = updateLinkNotificationConfigW();
@@ -904,6 +799,7 @@ public class VolumeDialogController {
                 if (D.BUG) Log.d(TAG, "onReceive STREAM_DEVICES_CHANGED_ACTION stream="
                         + stream + " devices=" + devices + " oldDevices=" + oldDevices);
                 changed = checkRoutedToBluetoothW(stream);
+                changed |= onVolumeChangedW(stream, 0);
             } else if (action.equals(AudioManager.RINGER_MODE_CHANGED_ACTION)) {
                 final int rm = intent.getIntExtra(AudioManager.EXTRA_RINGER_MODE, -1);
                 if (D.BUG) Log.d(TAG, "onReceive RINGER_MODE_CHANGED_ACTION rm="
@@ -975,13 +871,6 @@ public class VolumeDialogController {
 
         @Override
         public void onRemoteVolumeChanged(Token token, int flags) {
-            // If an inactive session changed the remoteVolume, bail
-            // since we don't have any active streams to update
-            if (!mRemoteStreams.containsKey(token)) {
-                Log.i(TAG, "onRemoteVolumeChanged called on inactive" +
-                        "stream. Ignoring");
-                return;
-            }
             final int stream = mRemoteStreams.get(token);
             final boolean showUI = (flags & AudioManager.FLAG_SHOW_UI) != 0;
             boolean changed = updateActiveStreamW(stream);
@@ -1059,7 +948,6 @@ public class VolumeDialogController {
         public int zenMode;
         public ComponentName effectsSuppressor;
         public String effectsSuppressorName;
-        public ZenModeConfig zenModeConfig;
         public int activeStream = NO_ACTIVE_STREAM;
         public boolean linkedNotification;
 
@@ -1073,7 +961,6 @@ public class VolumeDialogController {
             rt.zenMode = zenMode;
             if (effectsSuppressor != null) rt.effectsSuppressor = effectsSuppressor.clone();
             rt.effectsSuppressorName = effectsSuppressorName;
-            if (zenModeConfig != null) rt.zenModeConfig = zenModeConfig.copy();
             rt.activeStream = activeStream;
             rt.linkedNotification = linkedNotification;
             return rt;
@@ -1103,7 +990,6 @@ public class VolumeDialogController {
             sep(sb, indent); sb.append("zenMode:").append(zenMode);
             sep(sb, indent); sb.append("effectsSuppressor:").append(effectsSuppressor);
             sep(sb, indent); sb.append("effectsSuppressorName:").append(effectsSuppressorName);
-            sep(sb, indent); sb.append("zenModeConfig:").append(zenModeConfig);
             sep(sb, indent); sb.append("activeStream:").append(activeStream);
             sep(sb, indent); sb.append("linkedNotification:").append(linkedNotification);
             if (indent > 0) sep(sb, indent);
@@ -1119,11 +1005,6 @@ public class VolumeDialogController {
             } else {
                 sb.append(',');
             }
-        }
-
-        public Condition getManualExitCondition() {
-            return zenModeConfig != null && zenModeConfig.manualRule != null
-                    ? zenModeConfig.manualRule.condition : null;
         }
     }
 

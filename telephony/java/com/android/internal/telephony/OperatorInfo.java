@@ -147,7 +147,10 @@ public class OperatorInfo implements Parcelable {
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeString(mOperatorAlphaLong);
         dest.writeString(mOperatorAlphaShort);
-        dest.writeString(mOperatorNumeric + "+" + mRadioTech);
+        if (mRadioTech.equals(""))
+            dest.writeString(mOperatorNumeric);
+        else
+            dest.writeString(mOperatorNumeric + "+" + mRadioTech);
         dest.writeSerializable(mState);
     }
 

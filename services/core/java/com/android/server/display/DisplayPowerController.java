@@ -104,7 +104,6 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     private static final float TYPICAL_PROXIMITY_THRESHOLD = 5.0f;
 
     // Brightness animation ramp rate in brightness units per second.
-    private static final int BRIGHTNESS_RAMP_RATE_FAST = 200;
     private static final int BRIGHTNESS_RAMP_RATE_SLOW = 40;
 
     private static final int REPORTED_TO_POLICY_SCREEN_OFF = 0;
@@ -248,6 +247,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     private boolean mAppliedDimming;
     private boolean mAppliedLowPower;
 
+    // Brightness ramp rate fast.
+    private final int mBrightnessRampRateFast;
+
     // The controller for the automatic brightness level.
     private AutomaticBrightnessController mAutomaticBrightnessController;
 
@@ -308,18 +310,22 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         mAllowAutoBrightnessWhileDozingConfig = resources.getBoolean(
                 com.android.internal.R.bool.config_allowAutoBrightnessWhileDozing);
 
+        mBrightnessRampRateFast = resources.getInteger(
+                com.android.internal.R.integer.config_brightness_ramp_rate_fast);
+
         int lightSensorRate = resources.getInteger(
                 com.android.internal.R.integer.config_autoBrightnessLightSensorRate);
         long brighteningLightDebounce = resources.getInteger(
                 com.android.internal.R.integer.config_autoBrightnessBrighteningLightDebounce);
-        long brighteningLightFastDebounce = resources.getInteger(
-                com.android.internal.R.integer.config_autoBrightnessBrighteningLightFastDebounce);
         long darkeningLightDebounce = resources.getInteger(
                 com.android.internal.R.integer.config_autoBrightnessDarkeningLightDebounce);
         boolean autoBrightnessResetAmbientLuxAfterWarmUp = resources.getBoolean(
                 com.android.internal.R.bool.config_autoBrightnessResetAmbientLuxAfterWarmUp);
         int ambientLightHorizon = resources.getInteger(
                 com.android.internal.R.integer.config_autoBrightnessAmbientLightHorizon);
+        float autoBrightnessAdjustmentMaxGamma = resources.getFraction(
+                com.android.internal.R.fraction.config_autoBrightnessAdjustmentMaxGamma,
+                1, 1);
 
         if (mUseSoftwareAutoBrightnessConfig) {
             int[] lux = resources.getIntArray(
@@ -352,13 +358,13 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 if (bottom < screenBrightnessRangeMinimum) {
                     screenBrightnessRangeMinimum = bottom;
                 }
-                mAutomaticBrightnessController = new AutomaticBrightnessController(mContext, this,
+                mAutomaticBrightnessController = new AutomaticBrightnessController(this,
                         handler.getLooper(), sensorManager, screenAutoBrightnessSpline,
                         lightSensorWarmUpTimeConfig, screenBrightnessRangeMinimum,
                         mScreenBrightnessRangeMaximum, dozeScaleFactor, lightSensorRate,
-                        brighteningLightDebounce, brighteningLightFastDebounce,
-                        darkeningLightDebounce, autoBrightnessResetAmbientLuxAfterWarmUp,
-                        ambientLightHorizon);
+                        brighteningLightDebounce, darkeningLightDebounce,
+                        autoBrightnessResetAmbientLuxAfterWarmUp,
+                        ambientLightHorizon, autoBrightnessAdjustmentMaxGamma);
             }
         }
 
@@ -583,7 +589,6 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             } else {
                 setProximitySensorEnabled(false);
                 mWaitingForNegativeProximity = false;
-                mProximity = PROXIMITY_UNKNOWN;
             }
             if (mScreenOffBecauseOfProximity
                     && mProximity != PROXIMITY_POSITIVE) {
@@ -628,7 +633,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                     && mPowerRequest.brightnessSetByUser;
             mAutomaticBrightnessController.configure(autoBrightnessEnabled,
                     mPowerRequest.screenAutoBrightnessAdjustment, state != Display.STATE_ON,
-                    userInitiatedChange);
+                    userInitiatedChange, mPowerRequest.useTwilight);
         }
 
         // Apply brightness boost.
@@ -686,6 +691,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 slowChange = false;
             }
             mAppliedDimming = true;
+        } else if (mAppliedDimming) {
+            slowChange = false;
+            mAppliedDimming = false;
         }
 
         // If low power mode is enabled, cut the brightness level by half
@@ -698,6 +706,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 slowChange = false;
             }
             mAppliedLowPower = true;
+        } else if (mAppliedLowPower) {
+            slowChange = false;
+            mAppliedLowPower = false;
         }
 
         // Animate the screen brightness when the screen is on or dozing.
@@ -705,7 +716,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         if (!mPendingScreenOff) {
             if (state == Display.STATE_ON || state == Display.STATE_DOZE) {
                 animateScreenBrightness(brightness,
-                        slowChange ? BRIGHTNESS_RAMP_RATE_SLOW : BRIGHTNESS_RAMP_RATE_FAST);
+                        slowChange ? BRIGHTNESS_RAMP_RATE_SLOW : mBrightnessRampRateFast);
             } else {
                 animateScreenBrightness(brightness, 0);
             }
@@ -847,7 +858,11 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         // If there is already an animation in progress, don't interfere with it.
         if (mColorFadeOnAnimator.isStarted()
                 || mColorFadeOffAnimator.isStarted()) {
-            return;
+            if (target != Display.STATE_ON) {
+                return;
+            }
+            // If display state changed to on, proceed and stop the color fade and turn screen on.
+            mPendingScreenOff = false;
         }
 
         // If we were in the process of turning off the screen but didn't quite
@@ -1149,6 +1164,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         if (mAutomaticBrightnessController != null) {
             mAutomaticBrightnessController.dump(pw);
         }
+
     }
 
     private static String proximityToString(int state) {

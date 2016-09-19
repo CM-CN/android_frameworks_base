@@ -218,7 +218,7 @@ public class DozeService extends DreamService {
             // Here we need a wakelock to stay awake until the pulse is finished.
             mWakeLock.acquire();
             mPulsing = true;
-            if (!mDozeParameters.getProxCheckBeforePulse(reason)) {
+            if (!mDozeParameters.getProxCheckBeforePulse()) {
                 // skip proximity check
                 continuePulsing(reason);
                 return;
@@ -265,7 +265,6 @@ public class DozeService extends DreamService {
             @Override
             public void onPulseStarted() {
                 if (mPulsing && mDreaming) {
-                    mContext.sendBroadcast(new Intent(Intent.ACTION_DOZE_PULSE_STARTING));
                     turnDisplayOn();
                 }
             }
@@ -357,7 +356,7 @@ public class DozeService extends DreamService {
             if (DEBUG) Log.d(mTag, "No more schedule resets remaining");
             return;
         }
-        final long pulseDuration = mDozeParameters.getPulseDuration(DozeLog.PULSE_REASON_NOTIFICATION);
+        final long pulseDuration = mDozeParameters.getPulseDuration(false /*pickup*/);
         boolean pulseImmediately = System.currentTimeMillis() >= notificationTimeMs;
         if ((notificationTimeMs - mLastScheduleResetTime) >= pulseDuration) {
             mScheduleResetsRemaining--;
@@ -549,8 +548,8 @@ public class DozeService extends DreamService {
                     }
                 }
 
-                requestPulse(mPulseReason);
                 mRegistered = false;
+                requestPulse(mPulseReason);
                 updateListener();  // reregister, this sensor only fires once
 
                 // reset the notification pulse schedule, but only if we think we were not triggered

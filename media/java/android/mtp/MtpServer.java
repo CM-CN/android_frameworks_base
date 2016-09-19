@@ -23,12 +23,14 @@ package android.mtp;
 public class MtpServer implements Runnable {
 
     private long mNativeContext; // accessed by native methods
+    private final MtpDatabase mDatabase;
 
     static {
         System.loadLibrary("media_jni");
     }
 
     public MtpServer(MtpDatabase database, boolean usePtp) {
+        mDatabase = database;
         native_setup(database, usePtp);
         database.setServer(this);
     }
@@ -42,6 +44,7 @@ public class MtpServer implements Runnable {
     public void run() {
         native_run();
         native_cleanup();
+        mDatabase.close();
     }
 
     public void sendObjectAdded(int handle) {
@@ -54,10 +57,6 @@ public class MtpServer implements Runnable {
 
     public void sendDevicePropertyChanged(int property) {
         native_send_device_property_changed(property);
-    }
-
-    public void sendObjectUpdated(int handle) {
-        native_send_object_updated(handle);
     }
 
     public void addStorage(MtpStorage storage) {
@@ -74,7 +73,6 @@ public class MtpServer implements Runnable {
     private native final void native_send_object_added(int handle);
     private native final void native_send_object_removed(int handle);
     private native final void native_send_device_property_changed(int property);
-    private native final void native_send_object_updated(int handle);
     private native final void native_add_storage(MtpStorage storage);
     private native final void native_remove_storage(int storageId);
 }

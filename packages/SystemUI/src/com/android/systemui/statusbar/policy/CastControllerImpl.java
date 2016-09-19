@@ -16,8 +16,6 @@
 
 package com.android.systemui.statusbar.policy;
 
-import static android.media.MediaRouter.ROUTE_TYPE_REMOTE_DISPLAY;
-
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -40,6 +38,8 @@ import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+
+import static android.media.MediaRouter.ROUTE_TYPE_REMOTE_DISPLAY;
 
 /** Platform implementation of the cast controller. **/
 public class CastControllerImpl implements CastController {
@@ -115,7 +115,7 @@ public class CastControllerImpl implements CastController {
         }
         if (mDiscovering) {
             mMediaRouter.addCallback(ROUTE_TYPE_REMOTE_DISPLAY, mMediaCallback,
-                    MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN);
+                    MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY);
             mCallbackRegistered = true;
         } else if (mCallbacks.size() != 0) {
             mMediaRouter.addCallback(ROUTE_TYPE_REMOTE_DISPLAY, mMediaCallback,

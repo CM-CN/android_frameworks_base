@@ -17,7 +17,6 @@
 package android.text.format;
 
 import android.content.Context;
-import android.suda.utils.SudaUtils;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.text.SpannableStringBuilder;
@@ -178,23 +177,12 @@ public class DateFormat {
      * @hide
      */
     public static boolean is24HourFormat(Context context, int userHandle) {
-        String setting = Settings.System.getStringForUser(context.getContentResolver(),
+        String value = Settings.System.getStringForUser(context.getContentResolver(),
                 Settings.System.TIME_12_24, userHandle);
-        Locale locale = context.getResources().getConfiguration().locale;
-        return is24HourFormat(setting, locale);
-    }
 
-    /**
-     * Returns true if user preference with the given user handle is set to 24-hour format.
-     * @param setting value of the TIME_12_24 system setting, which may be null
-     * @param locale current default locale for this device
-     * @param userHandle the user handle of the user to query.
-     * @return true if 24 hour time format is selected, false otherwise.
-     *
-     * @hide
-     */
-    public static boolean is24HourFormat(String setting, Locale locale) {
-        if (setting == null) {
+        if (value == null) {
+            Locale locale = context.getResources().getConfiguration().locale;
+
             synchronized (sLocaleLock) {
                 if (sIs24HourLocale != null && sIs24HourLocale.equals(locale)) {
                     return sIs24Hour;
@@ -209,23 +197,23 @@ public class DateFormat {
                 String pattern = sdf.toPattern();
 
                 if (pattern.indexOf('H') >= 0) {
-                    setting = "24";
+                    value = "24";
                 } else {
-                    setting = "12";
+                    value = "12";
                 }
             } else {
-                setting = "12";
+                value = "12";
             }
 
             synchronized (sLocaleLock) {
                 sIs24HourLocale = locale;
-                sIs24Hour = setting.equals("24");
+                sIs24Hour = value.equals("24");
             }
 
             return sIs24Hour;
         }
 
-        return setting.equals("24");
+        return value.equals("24");
     }
 
     /**
@@ -473,11 +461,7 @@ public class DateFormat {
             switch (c) {
                 case 'A':
                 case 'a':
-                    if (SudaUtils.isSupportLanguage(false)) {
-                        replacement = DateUtils.getAMPMCNString(inDate.get(Calendar.HOUR), inDate.get(Calendar.AM_PM));
-                    } else {
-                        replacement = localeData.amPm[inDate.get(Calendar.AM_PM) - Calendar.AM];
-                    }
+                    replacement = localeData.amPm[inDate.get(Calendar.AM_PM) - Calendar.AM];
                     break;
                 case 'd':
                     replacement = zeroPad(inDate.get(Calendar.DATE), count);

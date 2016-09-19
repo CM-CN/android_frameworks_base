@@ -19,5 +19,4 @@ interface IKeyguardStateCallback {
     void onShowingStateChanged(boolean showing);
     void onSimSecureStateChanged(boolean simSecure);
     void onInputRestrictedStateChanged(boolean inputRestricted);
-    void onKeyguardPanelFocusChanged(boolean focused);
 }
