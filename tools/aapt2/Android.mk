@@ -139,7 +139,11 @@ hostLdLibs_linux := -lz
 hostLdLibs_darwin := -lz
 
 cFlags := -Wall -Werror -Wno-unused-parameter -UNDEBUG
+<<<<<<< HEAD
 cFlags_darwin := -D_DARWIN_UNLIMITED_STREAMS
+=======
+cFlags_darwin := -D_DARWIN_UNLIMITED_STREAMS -Wno-deprecated-declarations
+>>>>>>> 51b1a575c79d9de5eca5550977edb818d5620e10
 cFlags_windows := -Wno-maybe-uninitialized # Incorrectly marking use of Maybe.value() as error.
 cppFlags := -std=c++11 -Wno-missing-field-initializers -fno-exceptions -fno-rtti
 protoIncludes := $(call generated-sources-dir-for,STATIC_LIBRARIES,libaapt2,HOST)

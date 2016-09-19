@@ -782,7 +782,11 @@ public class CarrierConfigManager {
         sDefaults.putBoolean(KEY_OPERATOR_SELECTION_EXPAND_BOOL, true);
         sDefaults.putBoolean(KEY_PREFER_2G_BOOL, true);
         sDefaults.putBoolean(KEY_SHOW_APN_SETTING_CDMA_BOOL, true);
+<<<<<<< HEAD
         sDefaults.putBoolean(KEY_SHOW_CDMA_CHOICES_BOOL, true);
+=======
+        sDefaults.putBoolean(KEY_SHOW_CDMA_CHOICES_BOOL, false);
+>>>>>>> 51b1a575c79d9de5eca5550977edb818d5620e10
         sDefaults.putBoolean(KEY_SHOW_ONSCREEN_DIAL_BUTTON_BOOL, true);
         sDefaults.putBoolean(KEY_SIM_NETWORK_UNLOCK_ALLOW_DISMISS_BOOL, true);
         sDefaults.putBoolean(KEY_SUPPORT_PAUSE_IMS_VIDEO_CALLS_BOOL, false);
