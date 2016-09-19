@@ -101,10 +101,7 @@ LOCAL_MODULE := aapt
 LOCAL_MODULE_HOST_OS := darwin linux windows
 LOCAL_CFLAGS := $(aaptCFlags)
 LOCAL_CPPFLAGS := $(aaptCppFlags)
-<<<<<<< HEAD
-=======
 LOCAL_CFLAGS_darwin := -Wno-deprecated-declarations
->>>>>>> 51b1a575c79d9de5eca5550977edb818d5620e10
 LOCAL_LDLIBS_darwin := $(aaptHostLdLibs_darwin)
 LOCAL_LDLIBS_linux := $(aaptHostLdLibs_linux)
 LOCAL_SRC_FILES := $(aaptMain)

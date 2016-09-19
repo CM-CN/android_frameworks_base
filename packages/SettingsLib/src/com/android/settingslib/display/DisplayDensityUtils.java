@@ -41,11 +41,7 @@ public class DisplayDensityUtils {
     private static final float MIN_SCALE_INTERVAL = 0.09f;
 
     /** Minimum density scale. This is available on all devices. */
-<<<<<<< HEAD
-    private static final float MIN_SCALE = 0.85f;
-=======
     private static final float MIN_SCALE = 0.70f;
->>>>>>> 51b1a575c79d9de5eca5550977edb818d5620e10
 
     /** Maximum density scale. The actual scale used depends on the device. */
     private static final float MAX_SCALE = 1.50f;
@@ -61,13 +57,9 @@ public class DisplayDensityUtils {
      * largest.
      */
     private static final int[] SUMMARIES_SMALLER = new int[] {
-<<<<<<< HEAD
-            R.string.screen_zoom_summary_small
-=======
             R.string.screen_zoom_summary_small,
             R.string.screen_zoom_summary_smaller,
             R.string.screen_zoom_summary_smallest
->>>>>>> 51b1a575c79d9de5eca5550977edb818d5620e10
     };
 
     /**

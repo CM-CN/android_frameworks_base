@@ -383,12 +383,9 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
 
     int mMaxAllowedKeyguardNotifications;
 
-<<<<<<< HEAD
     // Status bar Network traffic;
     private NetworkTraffic mNetworkTraffic;
 
-=======
->>>>>>> 51b1a575c79d9de5eca5550977edb818d5620e10
     // carrier label
     private TextView mCarrierLabel;
     private boolean mShowCarrierInPanel = false;
@@ -1425,7 +1422,6 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
     };
 
     private View.OnLongClickListener mLongPressBackListener = new View.OnLongClickListener() {
-<<<<<<< HEAD
         @Override
         public boolean onLongClick(View v) {
             return handleLongPressBack();
@@ -1436,18 +1432,6 @@ public class PhoneStatusBar extends BaseStatusBar implements DemoMode,
 
         @Override
         public boolean onLongClick(View v) {
-=======
-        @Override
-        public boolean onLongClick(View v) {
-            return handleLongPressBack();
-        }
-    };
-
-    private View.OnLongClickListener mRecentsLongClickListener = new View.OnLongClickListener() {
-
-        @Override
-        public boolean onLongClick(View v) {
->>>>>>> 51b1a575c79d9de5eca5550977edb818d5620e10
             if (mRecents == null || !ActivityManager.supportsMultiWindow()
                     || !getComponent(Divider.class).getView().getSnapAlgorithm()
                             .isSplitScreenFeasible()) {
