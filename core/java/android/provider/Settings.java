@@ -3697,6 +3697,12 @@ public final class Settings {
          */
         public static final String THREE_FINGER_GESTURE = "three_finger_gesture";
 
+          /**
+         * Transparent qs shade
+         * @hide
+         */
+        public static final String QS_TRANSPARENT_SHADE = "qs_transparent_shade";
+
         /**
          * I am the lolrus.
          * <p>
